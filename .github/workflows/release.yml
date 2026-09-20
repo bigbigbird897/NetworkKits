@@ -90,6 +90,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Install web dependencies（csproj 构建时会自动 npm run build，必须先装依赖）
+        working-directory: NetworkComponentWeb
+        run: npm ci
       - name: Publish WPF
         working-directory: NetworkComponentWPF/NetworkComponentWPF
         run: dotnet publish NetworkComponentWPF.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o publish

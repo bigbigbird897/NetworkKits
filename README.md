@@ -43,14 +43,33 @@ git commit -m "chore: bump NetworkComponentWeb"
 
 ### 打 tag 触发自动发布
 
-在父仓库打一个 `v*` 形式的 tag 并推送，即触发 GitHub Actions，按**该 tag 所锁定的三个子模块提交**自动打包：
+CI 不直接用父仓库里的 submodule 指针，而是读根目录 **`repos.json`**，按其中指定的子仓库 tag 检出对应代码打包：
 
-```bash
-git tag -a v1.0.0 -m "release v1.0.0"
-git push origin v1.0.0
+```json
+{
+  "NetworkComponentWeb": "v1.0.0",
+  "NetworkComponent": "v1.0.0",
+  "NetworkComponentWPF": "v1.0.0"
+}
 ```
 
-> 因为子模块指针记录在父仓库的这次提交上，所以打 tag 前请先把子模块需要的提交都 push、并在父仓库里 `git add <submodule>` 更新指针后再打 tag。
+发版步骤：
+
+```bash
+# 1) 给要发版的子仓库打 tag 并推送（版本号自取）
+cd NetworkComponentWeb
+git tag -a v1.1.0 -m v1.1.0 && git push origin v1.1.0
+cd ..
+
+# 2) 改父仓库 repos.json，把对应项指到上面的 tag
+# 3) 提交父仓库并打父 tag（v*），推送即触发打包
+git add repos.json
+git commit -m "release: web v1.1.0"
+git tag -a v1.1.0 -m v1.1.0
+git push origin main --tags
+```
+
+> 这样三个子仓库可以独立演进、各自打 tag，发版时只需在 `repos.json` 指定每个用哪个 tag，不必同步升级。
 
 CI 产物会作为该 tag 的 GitHub Release 资产发布：
 - `web-dist.zip`：前端静态文件（`npm run build` 产物）

@@ -1,0 +1,9 @@
+[submodule "NetworkComponentWeb"]
+	path = NetworkComponentWeb
+	url = git@github.com:bigbigbird897/NetworkComponentWeb.git
+[submodule "NetworkComponent"]
+	path = NetworkComponent
+	url = git@github.com:bigbigbird897/NetworkComponent.git
+[submodule "NetworkComponentWPF"]
+	path = NetworkComponentWPF
+	url = git@github.com:bigbigbird897/NetworkComponentWPF.git

@@ -1,23 +1,30 @@
+# GitHub Actions 工作流：Release 打包发布
+# 触发条件：父仓库 NetworkKits 推送 v* 开头的 tag 时执行
+# 原理：打 tag 触发 CI，自动检出各子模块对应版本，分别构建前端、Linux后端、Windows后端、WPF桌面端，最后汇总产物生成GitHub Release
 name: Release
 
-# 仅在父仓库 NetworkKits 打 v* tag 时触发；
-# 此时 checkout 会把子模块锁定到该 tag 提交所记录的具体 commit。
+# 触发规则：仅推送 v 开头的标签时触发；
+# 父仓库打 v* tag，checkout 会自动把子模块锁定到该 tag 提交记录里保存的 commit
 on:
   push:
     tags:
       - 'v*'
 
+# 授予工作流仓库写入权限，用于创建 Release
 permissions:
   contents: write
 
 jobs:
-  # 1) 前端静态文件
+  # ===================== Job1：前端静态资源打包 =====================
   web:
     runs-on: ubuntu-latest
     steps:
+      # 检出父仓库代码，同时拉取 git submodule 子模块
       - uses: actions/checkout@v4
         with:
           submodules: true
+
+      # 读取 repos.json，为每个子目录切换到配置里指定的 tag
       - name: 按 repos.json 检出子仓库指定 tag
         shell: bash
         run: |
@@ -30,29 +37,40 @@ jobs:
               git -C "$dir" checkout -f "$tag"
             fi
           done
+
+      # 安装 Node.js 20 环境用于前端构建
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+
+      # 进入前端目录，安装依赖并执行打包
       - name: Build web dist
         working-directory: NetworkComponentWeb
         run: |
           npm ci
           npm run build
+
+      # 将前端打包产物压缩为 zip
       - name: Zip dist
         working-directory: NetworkComponentWeb
         run: zip -r ../web-dist.zip dist
+
+      # 上传压缩包作为构建产物（artifact），供后续 Release 任务下载
       - uses: actions/upload-artifact@v4
         with:
           name: web-dist
           path: web-dist.zip
 
-  # 2) 后端 Linux 自包含
+  # ===================== Job2：后端 Linux-x64 自包含发布包 =====================
   backend-linux:
     runs-on: ubuntu-latest
     steps:
+      # 检出父仓库与子模块
       - uses: actions/checkout@v4
         with:
           submodules: true
+
+      # 读取 repos.json，切换各子仓库到指定 tag
       - name: 按 repos.json 检出子仓库指定 tag
         shell: bash
         run: |
@@ -65,27 +83,38 @@ jobs:
               git -C "$dir" checkout -f "$tag"
             fi
           done
+
+      # 安装 .NET 10 SDK
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+
+      # 发布后端项目：linux-x64、自包含、不打包成单文件，输出到 publish-linux
       - name: Publish backend (linux-x64)
         working-directory: NetworkComponent
         run: dotnet publish NetworkComponent/NetworkComponent.csproj -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=false -o publish-linux
+
+      # 将发布目录打包为 tar.gz
       - name: Tar linux output
         working-directory: NetworkComponent
         run: tar czf ../backend-linux-x64.tar.gz -C publish-linux .
+
+      # 上传产物
       - uses: actions/upload-artifact@v4
         with:
           name: backend-linux
           path: backend-linux-x64.tar.gz
 
-  # 3) 后端 Windows 自包含
+  # ===================== Job3：后端 Windows-x64 自包含发布包 =====================
   backend-win:
     runs-on: windows-latest
     steps:
+      # 检出父仓库+子模块
       - uses: actions/checkout@v4
         with:
           submodules: true
+
+      # 读取 repos.json，切换子仓库 tag
       - name: 按 repos.json 检出子仓库指定 tag
         shell: bash
         run: |
@@ -98,28 +127,40 @@ jobs:
               git -C "$dir" checkout -f "$tag"
             fi
           done
+
+      # 安装 .NET 10 SDK
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+
+      # 发布 Windows 后端，自包含，非单文件
       - name: Publish backend (win-x64)
         working-directory: NetworkComponent
         run: dotnet publish NetworkComponent/NetworkComponent.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o publish-win
+
+      # PowerShell 压缩发布目录为 zip
       - name: Zip win output
         working-directory: NetworkComponent
         shell: pwsh
         run: Compress-Archive -Path publish-win\* -DestinationPath ..\backend-win-x64.zip -Force
+
+      # 上传产物
       - uses: actions/upload-artifact@v4
         with:
           name: backend-win
           path: backend-win-x64.zip
 
-  # 4) WPF 桌面壳（Windows-only；其 csproj 会自动先构建前端、发布后端、再把 dist 拷入 wwwroot）
+  # ===================== Job4：WPF Windows桌面端打包 =====================
+  # WPF 仅Windows平台；项目csproj内部会自动构建前端、发布后端，并将前端dist拷贝进wwwroot
   wpf:
     runs-on: windows-latest
     steps:
+      # 检出父仓库+子模块
       - uses: actions/checkout@v4
         with:
           submodules: true
+
+      # 读取 repos.json，切换子仓库 tag
       - name: 按 repos.json 检出子仓库指定 tag
         shell: bash
         run: |
@@ -132,43 +173,61 @@ jobs:
               git -C "$dir" checkout -f "$tag"
             fi
           done
+
+      # 安装 .NET10 和 Node20，WPF构建过程需要node编译前端
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+
+      # 提前安装前端依赖，csproj编译时会自动执行npm run build，必须先装依赖
       - name: Install web dependencies（csproj 构建时会自动 npm run build，必须先装依赖）
         working-directory: NetworkComponentWeb
         run: npm ci
+
+      # 发布WPF桌面程序，win-x64自包含
       - name: Publish WPF
         working-directory: NetworkComponentWPF/NetworkComponentWPF
         run: dotnet publish NetworkComponentWPF.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o publish
+
+      # 压缩WPF发布产物
       - name: Zip WPF output
         working-directory: NetworkComponentWPF/NetworkComponentWPF
         shell: pwsh
         run: Compress-Archive -Path publish\* -DestinationPath ..\..\NetworkComponentWPF-win-x64.zip -Force
+
+      # 上传WPF压缩包
       - uses: actions/upload-artifact@v4
         with:
           name: wpf
           path: NetworkComponentWPF-win-x64.zip
 
-  # 5) 汇总为 GitHub Release
+  # ===================== Job5：汇总所有产物，生成 GitHub Release =====================
+  # needs：等待前面4个job全部执行成功后才运行
   release:
     needs: [web, backend-linux, backend-win, wpf]
     runs-on: ubuntu-latest
     steps:
+      # 检出父仓库代码，不需要拉子模块
       - uses: actions/checkout@v4
         with:
           submodules: false
+
+      # 下载前面所有job上传的artifacts，放到 artifacts 目录
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      # 收集所有压缩包/归档文件，复制到 dist 目录
       - name: Collect assets
         run: |
           mkdir -p dist
           find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec cp {} dist/ \;
           ls -la dist
+
+      # 创建 GitHub Release，上传dist下所有包，自动生成Release更新日志
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
